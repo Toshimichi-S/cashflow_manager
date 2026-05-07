@@ -1,5 +1,10 @@
 """
 サブ画面群（売上管理・経費管理・口座管理・予実管理・レポート・設定）
+
+[修正] タブ切り替え時にツールバー（「売上を追加」ボタン等）が消える問題を修正
+  - 全 pack() に side="top" を明示し描画順を保証
+  - ツールバーフレームに height を固定して CTkScrollableFrame に侵食されないよう保護
+  - card 内のヘッダ行 / セパレータ / スクロールフレームを grid レイアウトに統一
 """
 
 from __future__ import annotations
@@ -36,6 +41,43 @@ def _fixed_label(parent, text: str, width: int, font=None, text_color=None, **kw
     )
 
 
+def _build_table_card(parent, col_defs: list[tuple[str, int]]):
+    """
+    テーブルカードを生成して (card, scroll) を返す。
+    内部レイアウトを grid に統一し、ヘッダが scroll に隠れないよう保護する。
+
+    grid 行構成:
+      row 0 : ヘッダ行   (sticky="ew")
+      row 1 : 区切り線   (sticky="ew")
+      row 2 : スクロール (sticky="nsew", weight=1)
+    """
+    card = make_frame(parent, corner_radius=8)
+    card.pack(side="top", fill="both", expand=True, padx=20, pady=(0, 20))
+
+    # row 2 だけが縦方向に伸びる
+    card.grid_rowconfigure(0, weight=0)
+    card.grid_rowconfigure(1, weight=0)
+    card.grid_rowconfigure(2, weight=1)
+    card.grid_columnconfigure(0, weight=1)
+
+    # ヘッダ行
+    hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0)
+    hdr.grid(row=0, column=0, sticky="ew", padx=12, pady=4)
+    for text, w in col_defs:
+        _fixed_label(hdr, text, w, font=FONT_SMALL,
+                     text_color=COLORS["text_muted"]).pack(side="left")
+
+    # 区切り線
+    sep = make_separator(card)
+    sep.grid(row=1, column=0, sticky="ew", padx=12)
+
+    # スクロールエリア
+    scroll = ctk.CTkScrollableFrame(card, fg_color="white", corner_radius=0)
+    scroll.grid(row=2, column=0, sticky="nsew")
+
+    return card, scroll
+
+
 # ─── 売上管理画面 ─────────────────────────────────────
 
 class SalesView(ctk.CTkFrame):
@@ -57,36 +99,31 @@ class SalesView(ctk.CTkFrame):
         rows = get_sales_for_month(self.year, self.month)
         total_plan = sum((r["planned"] or r["base_amount"]) for r in rows)
 
-        # ── ツールバー ──
-        tb = make_frame(self, fg_color="transparent")
-        tb.pack(fill="x", padx=20, pady=(16, 8))
-        make_button(tb, "+ 売上を追加", command=self._add, width=130).pack(side="left")
+        # ── ツールバー（高さ固定で保護） ──
+        tb = make_frame(self, fg_color="transparent", height=48)
+        tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
+        tb.pack_propagate(False)  # 高さを固定し scroll フレームに押しつぶされないよう保護
+        make_button(tb, "+ 売上を追加", command=self._add, width=130).pack(side="left", pady=8)
         make_label(
-            tb, f"{self.year}年{self.month}月  合計（予定）: {fmt_amount(total_plan)} 円",
+            tb,
+            f"{self.year}年{self.month}月  合計（予定）: {fmt_amount(total_plan)} 円",
             font=FONT_SMALL, text_color=COLORS["text_muted"],
-        ).pack(side="right")
+        ).pack(side="right", pady=8)
 
-        # ── テーブルカード ──
-        card = make_frame(self, corner_radius=8)
-        card.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-        # ヘッダ行
-        col_defs = [("名称", 180), ("カテゴリ", 120), ("種別", 70),
-                    ("予定金額", 100), ("実績金額", 100), ("差異", 90),
-                    ("メモ", 140), ("", 60)]
-        hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0)
-        hdr.pack(fill="x", padx=12, pady=4)
-        for text, w in col_defs:
-            _fixed_label(hdr, text, w, font=FONT_SMALL,
-                         text_color=COLORS["text_muted"]).pack(side="left")
-        make_separator(card).pack(fill="x", padx=12)
-
-        scroll = ctk.CTkScrollableFrame(card, fg_color="white", corner_radius=0)
-        scroll.pack(fill="both", expand=True)
+        # ── テーブルカード（grid レイアウト） ──
+        col_defs = [
+            ("名称", 180), ("カテゴリ", 120), ("種別", 70),
+            ("予定金額", 100), ("実績金額", 100), ("差異", 90),
+            ("メモ", 140), ("", 60),
+        ]
+        _, scroll = _build_table_card(self, col_defs)
 
         if not rows:
-            make_label(scroll, "データがありません。「+ 売上を追加」から登録してください。",
-                       font=FONT_NORMAL, text_color=COLORS["text_muted"]).pack(pady=40)
+            make_label(
+                scroll,
+                "データがありません。「+ 売上を追加」から登録してください。",
+                font=FONT_NORMAL, text_color=COLORS["text_muted"],
+            ).pack(pady=40)
             return
 
         for r in rows:
@@ -95,7 +132,7 @@ class SalesView(ctk.CTkFrame):
             diff = (act - plan) if act is not None else None
 
             row_fr = make_frame(scroll, fg_color="transparent", corner_radius=0)
-            row_fr.pack(fill="x")
+            row_fr.pack(side="top", fill="x")
 
             badge_text = "継続" if r["sale_type"] == "recurring" else "単発"
             badge_tc   = "#185FA5" if r["sale_type"] == "recurring" else "#3B6D11"
@@ -108,8 +145,8 @@ class SalesView(ctk.CTkFrame):
             _fixed_label(row_fr, fmt_amount(plan), 100,
                          font=FONT_NORMAL, text_color=COLORS["text_muted"],
                          anchor="e").pack(side="left")
-            _fixed_label(row_fr, fmt_amount(act) if act is not None else "—", 100,
-                         anchor="e").pack(side="left")
+            _fixed_label(row_fr, fmt_amount(act) if act is not None else "—",
+                         100, anchor="e").pack(side="left")
             if diff is not None:
                 _fixed_label(row_fr, fmt_diff(diff), 90, font=FONT_SMALL,
                              text_color=diff_color(diff, True), anchor="e").pack(side="left")
@@ -120,10 +157,13 @@ class SalesView(ctk.CTkFrame):
                          font=FONT_SMALL, text_color=COLORS["text_muted"]).pack(side="left")
 
             sale_id = r["id"]
-            make_button(row_fr, "編集", command=lambda sid=sale_id: self._edit(sid),
-                        width=55, fg_color=COLORS["bg"], hover_color=COLORS["border"],
-                        text_color=COLORS["text"]).pack(side="left", padx=4)
-            make_separator(scroll).pack(fill="x", padx=12)
+            make_button(
+                row_fr, "編集",
+                command=lambda sid=sale_id: self._edit(sid),
+                width=55, fg_color=COLORS["bg"], hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+            ).pack(side="left", padx=4)
+            make_separator(scroll).pack(side="top", fill="x", padx=12)
 
     def _add(self):
         SaleDialog(self, on_save=self._on_save)
@@ -161,33 +201,31 @@ class ExpenseView(ctk.CTkFrame):
         rows = get_expenses_for_month(self.year, self.month)
         total_plan = sum((r["planned"] or r["base_amount"]) for r in rows)
 
-        tb = make_frame(self, fg_color="transparent")
-        tb.pack(fill="x", padx=20, pady=(16, 8))
-        make_button(tb, "+ 経費を追加", command=self._add, width=130).pack(side="left")
+        # ── ツールバー（高さ固定で保護） ──
+        tb = make_frame(self, fg_color="transparent", height=48)
+        tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
+        tb.pack_propagate(False)
+        make_button(tb, "+ 経費を追加", command=self._add, width=130).pack(side="left", pady=8)
         make_label(
-            tb, f"{self.year}年{self.month}月  合計（予定）: {fmt_amount(total_plan)} 円",
+            tb,
+            f"{self.year}年{self.month}月  合計（予定）: {fmt_amount(total_plan)} 円",
             font=FONT_SMALL, text_color=COLORS["text_muted"],
-        ).pack(side="right")
+        ).pack(side="right", pady=8)
 
-        card = make_frame(self, corner_radius=8)
-        card.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-        col_defs = [("名称", 180), ("カテゴリ", 120), ("種別", 70),
-                    ("予定金額", 100), ("実績金額", 100), ("差異", 90),
-                    ("メモ", 140), ("", 60)]
-        hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0)
-        hdr.pack(fill="x", padx=12, pady=4)
-        for text, w in col_defs:
-            _fixed_label(hdr, text, w, font=FONT_SMALL,
-                         text_color=COLORS["text_muted"]).pack(side="left")
-        make_separator(card).pack(fill="x", padx=12)
-
-        scroll = ctk.CTkScrollableFrame(card, fg_color="white", corner_radius=0)
-        scroll.pack(fill="both", expand=True)
+        # ── テーブルカード（grid レイアウト） ──
+        col_defs = [
+            ("名称", 180), ("カテゴリ", 120), ("種別", 70),
+            ("予定金額", 100), ("実績金額", 100), ("差異", 90),
+            ("メモ", 140), ("", 60),
+        ]
+        _, scroll = _build_table_card(self, col_defs)
 
         if not rows:
-            make_label(scroll, "データがありません。「+ 経費を追加」から登録してください。",
-                       font=FONT_NORMAL, text_color=COLORS["text_muted"]).pack(pady=40)
+            make_label(
+                scroll,
+                "データがありません。「+ 経費を追加」から登録してください。",
+                font=FONT_NORMAL, text_color=COLORS["text_muted"],
+            ).pack(pady=40)
             return
 
         for r in rows:
@@ -196,7 +234,7 @@ class ExpenseView(ctk.CTkFrame):
             diff = (plan - act) if act is not None else None  # 節約をプラスで表現
 
             row_fr = make_frame(scroll, fg_color="transparent", corner_radius=0)
-            row_fr.pack(fill="x")
+            row_fr.pack(side="top", fill="x")
 
             badge_text = "固定" if r["expense_type"] == "fixed" else "変動"
             badge_tc   = "#854F0B" if r["expense_type"] == "fixed" else "#993C1D"
@@ -220,10 +258,13 @@ class ExpenseView(ctk.CTkFrame):
                          font=FONT_SMALL, text_color=COLORS["text_muted"]).pack(side="left")
 
             exp_id = r["id"]
-            make_button(row_fr, "編集", command=lambda eid=exp_id: self._edit(eid),
-                        width=55, fg_color=COLORS["bg"], hover_color=COLORS["border"],
-                        text_color=COLORS["text"]).pack(side="left", padx=4)
-            make_separator(scroll).pack(fill="x", padx=12)
+            make_button(
+                row_fr, "編集",
+                command=lambda eid=exp_id: self._edit(eid),
+                width=55, fg_color=COLORS["bg"], hover_color=COLORS["border"],
+                text_color=COLORS["text"],
+            ).pack(side="left", padx=4)
+            make_separator(scroll).pack(side="top", fill="x", padx=12)
 
     def _add(self):
         ExpenseDialog(self, on_save=self._on_save)
@@ -261,36 +302,45 @@ class AccountsView(ctk.CTkFrame):
         accounts = get_all_accounts()
         balances = {a["id"]: a["balance"] for a in get_all_balances_for_month(self.year, self.month)}
 
-        tb = make_frame(self, fg_color="transparent")
-        tb.pack(fill="x", padx=20, pady=(16, 8))
-        make_button(tb, "+ 口座を追加", command=self._add_account, width=130).pack(side="left")
+        # ── ツールバー（高さ固定で保護） ──
+        tb = make_frame(self, fg_color="transparent", height=48)
+        tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
+        tb.pack_propagate(False)
+        make_button(tb, "+ 口座を追加", command=self._add_account, width=130).pack(side="left", pady=8)
 
         scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0)
-        scroll.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+        scroll.pack(side="top", fill="both", expand=True, padx=20, pady=(0, 20))
 
         if not accounts:
-            make_label(scroll, "口座が登録されていません。「+ 口座を追加」から登録してください。",
-                       font=FONT_NORMAL, text_color=COLORS["text_muted"]).pack(pady=40)
+            make_label(
+                scroll,
+                "口座が登録されていません。「+ 口座を追加」から登録してください。",
+                font=FONT_NORMAL, text_color=COLORS["text_muted"],
+            ).pack(pady=40)
             return
 
         for acct in accounts:
             bal = balances.get(acct.id, 0.0)
             card = make_frame(scroll, corner_radius=8)
-            card.pack(fill="x", pady=(0, 10))
+            card.pack(side="top", fill="x", pady=(0, 10))
 
             info_row = make_frame(card, fg_color="transparent")
-            info_row.pack(fill="x", padx=14, pady=(12, 4))
+            info_row.pack(side="top", fill="x", padx=14, pady=(12, 4))
             make_label(info_row, f"{acct.bank_name}  {acct.name}", font=FONT_BOLD).pack(side="left")
 
             bal_color = COLORS["danger"] if bal < 0 else COLORS["text"]
-            make_label(card, f"{fmt_amount(bal)} 円",
-                       font=("Yu Gothic UI", 20, "bold"),
-                       text_color=bal_color).pack(anchor="w", padx=14)
+            make_label(
+                card, f"{fmt_amount(bal)} 円",
+                font=("Yu Gothic UI", 20, "bold"),
+                text_color=bal_color,
+            ).pack(side="top", anchor="w", padx=14)
 
             edit_row = make_frame(card, fg_color="transparent")
-            edit_row.pack(fill="x", padx=14, pady=(4, 12))
-            make_label(edit_row, f"{self.year}年{self.month}月 残高を更新:",
-                       font=FONT_SMALL, text_color=COLORS["text_muted"]).pack(side="left")
+            edit_row.pack(side="top", fill="x", padx=14, pady=(4, 12))
+            make_label(
+                edit_row, f"{self.year}年{self.month}月 残高を更新:",
+                font=FONT_SMALL, text_color=COLORS["text_muted"],
+            ).pack(side="left")
             entry = make_entry(edit_row, width=140, placeholder=str(int(bal)))
             entry.pack(side="left", padx=8)
 
@@ -363,34 +413,28 @@ class YojitsuView(ctk.CTkFrame):
         summaries = compute_annual_summaries(self.fiscal_year)
         fiscal_months = get_fiscal_months(self.fiscal_year)
 
-        tb = make_frame(self, fg_color="transparent")
-        tb.pack(fill="x", padx=20, pady=(16, 8))
-        make_label(tb, f"{self.fiscal_year}年度  年間予実比較", font=FONT_BOLD).pack(side="left")
-        make_button(tb, "↓ CSV",   command=self._export_csv,   width=90).pack(side="right", padx=(8, 0))
-        make_button(tb, "↓ Excel", command=self._export_excel, width=100).pack(side="right")
+        # ── ツールバー（高さ固定で保護） ──
+        tb = make_frame(self, fg_color="transparent", height=48)
+        tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
+        tb.pack_propagate(False)
+        make_label(tb, f"{self.fiscal_year}年度  年間予実比較", font=FONT_BOLD).pack(side="left", pady=8)
+        make_button(tb, "↓ CSV",   command=self._export_csv,   width=90).pack(side="right", padx=(8, 0), pady=8)
+        make_button(tb, "↓ Excel", command=self._export_excel, width=100).pack(side="right", pady=8)
 
-        card = make_frame(self, corner_radius=8)
-        card.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
+        # ── テーブルカード（grid レイアウト） ──
         COL_W = 100
-        cols = ["月", "売上（予）", "売上（実）", "売上差異",
-                "経費（予）", "経費（実）", "経費差異",
-                "収支（予）", "収支（実）", "収支差異"]
-        hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0)
-        hdr.pack(fill="x", padx=12, pady=4)
-        for text in cols:
-            _fixed_label(hdr, text, COL_W, font=FONT_SMALL,
-                         text_color=COLORS["text_muted"]).pack(side="left")
-        make_separator(card).pack(fill="x", padx=12)
-
-        scroll = ctk.CTkScrollableFrame(card, fg_color="white", corner_radius=0)
-        scroll.pack(fill="both", expand=True)
+        col_defs = [
+            ("月", COL_W), ("売上（予）", COL_W), ("売上（実）", COL_W), ("売上差異", COL_W),
+            ("経費（予）", COL_W), ("経費（実）", COL_W), ("経費差異", COL_W),
+            ("収支（予）", COL_W), ("収支（実）", COL_W), ("収支差異", COL_W),
+        ]
+        _, scroll = _build_table_card(self, col_defs)
 
         now = datetime.now()
         for s, (y, m) in zip(summaries, fiscal_months):
             is_future = (y > now.year) or (y == now.year and m > now.month)
             row_fr = make_frame(scroll, fg_color="transparent", corner_radius=0)
-            row_fr.pack(fill="x")
+            row_fr.pack(side="top", fill="x")
 
             vals = [
                 f"{m}月",
@@ -420,7 +464,7 @@ class YojitsuView(ctk.CTkFrame):
                     tc = COLORS["text"]
                 _fixed_label(row_fr, val, COL_W, font=FONT_SMALL, text_color=tc).pack(side="left")
 
-            make_separator(scroll).pack(fill="x", padx=12)
+            make_separator(scroll).pack(side="top", fill="x", padx=12)
 
     def _export_csv(self):
         path = filedialog.asksaveasfilename(
@@ -461,15 +505,15 @@ class SettingsView(ctk.CTkFrame):
 
     def _build(self):
         scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0)
-        scroll.pack(fill="both", expand=True, padx=20, pady=16)
+        scroll.pack(side="top", fill="both", expand=True, padx=20, pady=16)
 
         # 年度設定
         card = make_frame(scroll, corner_radius=8)
-        card.pack(fill="x", pady=(0, 12))
+        card.pack(side="top", fill="x", pady=(0, 12))
         make_label(card, "年度設定", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
-        make_separator(card).pack(fill="x", padx=14)
+        make_separator(card).pack(side="top", fill="x", padx=14)
         row = make_frame(card, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=10)
+        row.pack(side="top", fill="x", padx=14, pady=10)
         make_label(row, "会計年度の開始月:", font=FONT_NORMAL).pack(side="left")
         current = get_fiscal_start_month()
         months = [f"{m}月" for m in range(1, 13)]
@@ -488,18 +532,18 @@ class SettingsView(ctk.CTkFrame):
 
         # カテゴリ管理
         card2 = make_frame(scroll, corner_radius=8)
-        card2.pack(fill="x", pady=(0, 12))
+        card2.pack(side="top", fill="x", pady=(0, 12))
         make_label(card2, "カテゴリ管理", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
-        make_separator(card2).pack(fill="x", padx=14)
+        make_separator(card2).pack(side="top", fill="x", padx=14)
         self._build_category_section(card2)
 
         # バックアップ
         card3 = make_frame(scroll, corner_radius=8)
-        card3.pack(fill="x", pady=(0, 12))
+        card3.pack(side="top", fill="x", pady=(0, 12))
         make_label(card3, "データバックアップ", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
-        make_separator(card3).pack(fill="x", padx=14)
+        make_separator(card3).pack(side="top", fill="x", padx=14)
         btn_row = make_frame(card3, fg_color="transparent")
-        btn_row.pack(fill="x", padx=14, pady=12)
+        btn_row.pack(side="top", fill="x", padx=14, pady=12)
         make_button(btn_row, "バックアップを保存", command=self._backup, width=160).pack(side="left", padx=(0, 8))
         make_button(
             btn_row, "バックアップから復元", command=self._restore,
@@ -509,15 +553,17 @@ class SettingsView(ctk.CTkFrame):
     def _build_category_section(self, parent):
         cats = get_categories()
         cat_frame = make_frame(parent, fg_color="transparent")
-        cat_frame.pack(fill="x", padx=14, pady=8)
+        cat_frame.pack(side="top", fill="x", padx=14, pady=8)
 
         for cat in cats:
             row = make_frame(cat_frame, fg_color="transparent")
-            row.pack(fill="x", pady=2)
+            row.pack(side="top", fill="x", pady=2)
             tc = "#185FA5" if cat.type == "sale" else "#854F0B"
             make_label(row, cat.name, font=FONT_SMALL, text_color=tc).pack(side="left")
-            make_label(row, f"（{'売上' if cat.type == 'sale' else '経費'}）",
-                       font=FONT_SMALL, text_color=COLORS["text_muted"]).pack(side="left", padx=6)
+            make_label(
+                row, f"（{'売上' if cat.type == 'sale' else '経費'}）",
+                font=FONT_SMALL, text_color=COLORS["text_muted"],
+            ).pack(side="left", padx=6)
             make_button(
                 row, "削除",
                 command=lambda cid=cat.id: self._delete_cat(cid),
@@ -525,7 +571,7 @@ class SettingsView(ctk.CTkFrame):
             ).pack(side="right")
 
         add_row = make_frame(parent, fg_color=COLORS["bg"], corner_radius=6)
-        add_row.pack(fill="x", padx=14, pady=(4, 12))
+        add_row.pack(side="top", fill="x", padx=14, pady=(4, 12))
         e_cat_name = make_entry(add_row, width=180, placeholder="カテゴリ名")
         e_cat_name.pack(side="left", padx=(10, 6), pady=8)
         cb_type = make_combobox(add_row, ["売上", "経費"], width=90)
