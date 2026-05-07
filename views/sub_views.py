@@ -1,10 +1,12 @@
 """
-サブ画面群（売上管理・経費管理・口座管理・予実管理・レポート・設定）
+サブ画面群（売上管理・経費管理・口座管理・予実管理・設定）
 
-[修正] タブ切り替え時にツールバー（「売上を追加」ボタン等）が消える問題を修正
-  - 全 pack() に side="top" を明示し描画順を保証
-  - ツールバーフレームに height を固定して CTkScrollableFrame に侵食されないよう保護
-  - card 内のヘッダ行 / セパレータ / スクロールフレームを grid レイアウトに統一
+[修正] CTkFrame 内の grid レイアウトを廃止し pack のみに統一
+  - CTkFrame は内部で pack を使うため grid を使うと CustomTkinter のバージョンや
+    Python バージョンによって正常に動作しない
+  - ツールバー・ヘッダ・スクロールエリアを全て pack(side="top") で積み上げる構造に変更
+  - ツールバーは height + pack_propagate(False) で高さを固定
+  - ヘッダも height + pack_propagate(False) で高さを固定
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ from utils.export import export_annual_csv, export_annual_excel, backup_database
 
 
 def _fixed_label(parent, text: str, width: int, font=None, text_color=None, **kwargs) -> ctk.CTkLabel:
-    """固定幅ラベルを生成する（width は CTkLabel のコンストラクタに渡す）"""
     return ctk.CTkLabel(
         parent, text=text, width=width, anchor="w",
         font=font or FONT_NORMAL,
@@ -44,36 +45,30 @@ def _fixed_label(parent, text: str, width: int, font=None, text_color=None, **kw
 def _build_table_card(parent, col_defs: list[tuple[str, int]]):
     """
     テーブルカードを生成して (card, scroll) を返す。
-    内部レイアウトを grid に統一し、ヘッダが scroll に隠れないよう保護する。
+    pack のみを使用し CTkFrame との互換性を保証する。
 
-    grid 行構成:
-      row 0 : ヘッダ行   (sticky="ew")
-      row 1 : 区切り線   (sticky="ew")
-      row 2 : スクロール (sticky="nsew", weight=1)
+    pack 構成:
+      ヘッダ行   side="top", fill="x", 高さ固定 (pack_propagate=False)
+      区切り線   side="top", fill="x"
+      スクロール  side="top", fill="both", expand=True
     """
     card = make_frame(parent, corner_radius=8)
     card.pack(side="top", fill="both", expand=True, padx=20, pady=(0, 20))
 
-    # row 2 だけが縦方向に伸びる
-    card.grid_rowconfigure(0, weight=0)
-    card.grid_rowconfigure(1, weight=0)
-    card.grid_rowconfigure(2, weight=1)
-    card.grid_columnconfigure(0, weight=1)
-
-    # ヘッダ行
-    hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0)
-    hdr.grid(row=0, column=0, sticky="ew", padx=12, pady=4)
+    # ヘッダ行（高さ固定）
+    hdr = make_frame(card, fg_color=COLORS["bg"], corner_radius=0, height=32)
+    hdr.pack(side="top", fill="x", padx=12, pady=4)
+    hdr.pack_propagate(False)
     for text, w in col_defs:
         _fixed_label(hdr, text, w, font=FONT_SMALL,
                      text_color=COLORS["text_muted"]).pack(side="left")
 
     # 区切り線
-    sep = make_separator(card)
-    sep.grid(row=1, column=0, sticky="ew", padx=12)
+    make_separator(card).pack(side="top", fill="x", padx=12)
 
     # スクロールエリア
     scroll = ctk.CTkScrollableFrame(card, fg_color="white", corner_radius=0)
-    scroll.grid(row=2, column=0, sticky="nsew")
+    scroll.pack(side="top", fill="both", expand=True)
 
     return card, scroll
 
@@ -99,10 +94,10 @@ class SalesView(ctk.CTkFrame):
         rows = get_sales_for_month(self.year, self.month)
         total_plan = sum((r["planned"] or r["base_amount"]) for r in rows)
 
-        # ── ツールバー（高さ固定で保護） ──
+        # ── ツールバー（高さ固定） ──
         tb = make_frame(self, fg_color="transparent", height=48)
         tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
-        tb.pack_propagate(False)  # 高さを固定し scroll フレームに押しつぶされないよう保護
+        tb.pack_propagate(False)
         make_button(tb, "+ 売上を追加", command=self._add, width=130).pack(side="left", pady=8)
         make_label(
             tb,
@@ -110,7 +105,6 @@ class SalesView(ctk.CTkFrame):
             font=FONT_SMALL, text_color=COLORS["text_muted"],
         ).pack(side="right", pady=8)
 
-        # ── テーブルカード（grid レイアウト） ──
         col_defs = [
             ("名称", 180), ("カテゴリ", 120), ("種別", 70),
             ("予定金額", 100), ("実績金額", 100), ("差異", 90),
@@ -201,7 +195,7 @@ class ExpenseView(ctk.CTkFrame):
         rows = get_expenses_for_month(self.year, self.month)
         total_plan = sum((r["planned"] or r["base_amount"]) for r in rows)
 
-        # ── ツールバー（高さ固定で保護） ──
+        # ── ツールバー（高さ固定） ──
         tb = make_frame(self, fg_color="transparent", height=48)
         tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
         tb.pack_propagate(False)
@@ -212,7 +206,6 @@ class ExpenseView(ctk.CTkFrame):
             font=FONT_SMALL, text_color=COLORS["text_muted"],
         ).pack(side="right", pady=8)
 
-        # ── テーブルカード（grid レイアウト） ──
         col_defs = [
             ("名称", 180), ("カテゴリ", 120), ("種別", 70),
             ("予定金額", 100), ("実績金額", 100), ("差異", 90),
@@ -231,7 +224,7 @@ class ExpenseView(ctk.CTkFrame):
         for r in rows:
             plan = r["planned"] if r["planned"] is not None else r["base_amount"]
             act  = r["actual"]
-            diff = (plan - act) if act is not None else None  # 節約をプラスで表現
+            diff = (plan - act) if act is not None else None
 
             row_fr = make_frame(scroll, fg_color="transparent", corner_radius=0)
             row_fr.pack(side="top", fill="x")
@@ -302,7 +295,7 @@ class AccountsView(ctk.CTkFrame):
         accounts = get_all_accounts()
         balances = {a["id"]: a["balance"] for a in get_all_balances_for_month(self.year, self.month)}
 
-        # ── ツールバー（高さ固定で保護） ──
+        # ── ツールバー（高さ固定） ──
         tb = make_frame(self, fg_color="transparent", height=48)
         tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
         tb.pack_propagate(False)
@@ -413,7 +406,7 @@ class YojitsuView(ctk.CTkFrame):
         summaries = compute_annual_summaries(self.fiscal_year)
         fiscal_months = get_fiscal_months(self.fiscal_year)
 
-        # ── ツールバー（高さ固定で保護） ──
+        # ── ツールバー（高さ固定） ──
         tb = make_frame(self, fg_color="transparent", height=48)
         tb.pack(side="top", fill="x", padx=20, pady=(16, 8))
         tb.pack_propagate(False)
@@ -421,7 +414,6 @@ class YojitsuView(ctk.CTkFrame):
         make_button(tb, "↓ CSV",   command=self._export_csv,   width=90).pack(side="right", padx=(8, 0), pady=8)
         make_button(tb, "↓ Excel", command=self._export_excel, width=100).pack(side="right", pady=8)
 
-        # ── テーブルカード（grid レイアウト） ──
         COL_W = 100
         col_defs = [
             ("月", COL_W), ("売上（予）", COL_W), ("売上（実）", COL_W), ("売上差異", COL_W),
@@ -507,7 +499,6 @@ class SettingsView(ctk.CTkFrame):
         scroll = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0)
         scroll.pack(side="top", fill="both", expand=True, padx=20, pady=16)
 
-        # 年度設定
         card = make_frame(scroll, corner_radius=8)
         card.pack(side="top", fill="x", pady=(0, 12))
         make_label(card, "年度設定", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
@@ -530,14 +521,12 @@ class SettingsView(ctk.CTkFrame):
 
         make_button(row, "保存", command=_save_fiscal, width=80).pack(side="left")
 
-        # カテゴリ管理
         card2 = make_frame(scroll, corner_radius=8)
         card2.pack(side="top", fill="x", pady=(0, 12))
         make_label(card2, "カテゴリ管理", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
         make_separator(card2).pack(side="top", fill="x", padx=14)
         self._build_category_section(card2)
 
-        # バックアップ
         card3 = make_frame(scroll, corner_radius=8)
         card3.pack(side="top", fill="x", pady=(0, 12))
         make_label(card3, "データバックアップ", font=FONT_BOLD).pack(anchor="w", padx=14, pady=(12, 4))
